@@ -1,0 +1,665 @@
+{
+  "name": "Review Automation",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "91df5c51-fec4-4381-b1dd-57acef32658a",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.bewakoof.com/api/rn/v1/admin/submitted-reviews",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "pending"
+            },
+            {
+              "name": "per_page",
+              "value": "5"
+            },
+            {
+              "name": "page",
+              "value": "0"
+            }
+          ]
+        },
+        "options": {
+          "response": {},
+          "timeout": 30000
+        }
+      },
+      "id": "ca58d12d-1001-43e9-9b73-3dee98b4a80e",
+      "name": "Fetch Pending Reviews",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -800,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process reviews and add computed fields\nconst reviews = $json.reviews;\n\n// Error handling\nif (!reviews) {\n  return { error: \"No reviews found to process\" };\n}\n\nif (!Array.isArray(reviews)) {\n  return { error: \"Invalid reviews data format\" };\n}\n\nif (reviews.length === 0) {\n  return { error: \"No reviews found to process\" };\n}\n\n// Process each review\nconst processedReviews = reviews.map(review => {\n  // Skip reviews missing required fields\n  if (!review.id || !review.user_id || !review.product_id || typeof review.rating === 'undefined' || !review.review) {\n    console.warn(`Skipping review ${review.id} - missing required fields`);\n    return null;\n  }\n\n  // CORRECTED: Image detection logic\n  const hasImage = review.images && review.images.length > 0 && review.enabled_images_count > 0;\n  const imageUrl = hasImage && review.images[0] ? review.images[0].url : null;\n  \n  return {\n    // Original API fields (direct passthrough)\n    id: review.id,\n    user_id: review.user_id,\n    user_name: review.user_name,\n    product_id: review.product_id,\n    order_id: review.order_id,\n    rating: review.rating,\n    review: review.review,\n    images: review.images,\n    enabled_images_count: review.enabled_images_count,\n    created_at: review.created_at,\n    status: review.status,\n    edited: review.edited,\n    edited_review: review.edited_review,\n    verified_purchase: review.verified_purchase,\n    submittedBy: review.submittedBy,\n    title: review.title,\n    \n    // Computed fields\n    has_image: hasImage,\n    image_url: imageUrl,\n    processed_at: new Date().toISOString()\n  };\n}).filter(review => review !== null);\n\n// Calculate metadata\nconst textOnlyCount = processedReviews.filter(r => !r.has_image).length;\nconst imageReviewCount = processedReviews.filter(r => r.has_image).length;\n\n// Return final structure\nreturn {\n  reviews: processedReviews,\n  metadata: {\n    total_count: processedReviews.length,\n    text_only_count: textOnlyCount,\n    image_review_count: imageReviewCount,\n    processed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "59e7a7f7-75f3-40c8-a84b-c8a237a4e219",
+      "name": "Data Preparation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "f432fc4b-2e9c-46ec-a429-38c25102387f",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -400,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://s3.amazonaws.com/YOUR_BUCKET/product-images/{{ $json.product_id }}/",
+        "options": {
+          "response": {},
+          "timeout": 30000
+        }
+      },
+      "id": "386ac463-cc73-43fc-bc70-aeb62691be0d",
+      "name": "Fetch Product Images",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-vision:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "YOUR_GOOGLE_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\n  \"parts\": [\n    {\n      \"text\": \"Compare the user-submitted image with the product catalogue images. Rate similarity from 0-100 where:\\n100 = Same product, good quality\\n80-99 = Same product, minor differences\\n50-79 = Same product, significant differences\\n30-49 = Possibly same product, poor quality\\n0-29 = Different product or completely irrelevant\\n\\nUser submitted image URL: {{ $json.image_url }}\\nProduct ID: {{ $json.product_id }}\\n\\nReturn JSON only:\\n{\\n  \\\"similarity_score\\\": 85,\\n  \\\"reasoning\\\": \\\"Same product, good lighting and angle\\\",\\n  \\\"recommendation\\\": \\\"proceed\\\"\\n}\"\n    },\n    {\n      \"inline_data\": {\n        \"mime_type\": \"image/jpeg\",\n        \"data\": \"{{ $json.image_url }}\"\n      }\n    }\n  ]\n}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\n  \"temperature\": 0.2,\n  \"candidateCount\": 1,\n  \"maxOutputTokens\": 300\n}"
+            }
+          ]
+        },
+        "options": {
+          "response": {},
+          "timeout": 60000
+        }
+      },
+      "id": "d98a4fd4-f286-49a4-ad1a-158a23f86018",
+      "name": "Image Similarity Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse image similarity response and make routing decision\ntry {\n  const geminiResponse = $json.candidates[0].content.parts[0].text;\n  const cleanResponse = geminiResponse.replace(/```json|```/g, '').trim();\n  const imageAnalysis = JSON.parse(cleanResponse);\n  \n  const similarityThreshold = 50; // Minimum similarity required\n  \n  // Get original review data from previous node\n  const reviewData = $('Split In Batches').item.json;\n  \n  if (imageAnalysis.similarity_score >= similarityThreshold) {\n    // Image passed - route to text analysis with image score bonus\n    return {\n      ...reviewData,\n      image_similarity_score: imageAnalysis.similarity_score,\n      image_reasoning: imageAnalysis.reasoning,\n      image_status: 'validated',\n      route_to: 'text_analysis'\n    };\n  } else {\n    // Image failed - direct rejection\n    return {\n      ...reviewData,\n      image_similarity_score: imageAnalysis.similarity_score,\n      image_reasoning: imageAnalysis.reasoning,\n      image_status: 'rejected',\n      route_to: 'direct_reject',\n      final_decision: 'rejected',\n      ai_reasoning: `Image rejected: ${imageAnalysis.reasoning}`,\n      processed_at: new Date().toISOString()\n    };\n  }\n} catch (error) {\n  // Error handling - route to manual review\n  const reviewData = $('Split In Batches').item.json;\n  return {\n    ...reviewData,\n    image_similarity_score: 0,\n    image_reasoning: 'Image processing error: ' + error.message,\n    image_status: 'error',\n    route_to: 'manual_review',\n    final_decision: 'manual_review',\n    ai_reasoning: 'Image processing failed',\n    processed_at: new Date().toISOString()\n  };\n}"
+      },
+      "id": "7476b563-320e-42f0-b9ad-61100dfec0b2",
+      "name": "Image Decision Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c28a0663-e758-4421-8251-ba59dce31bf4",
+      "name": "Image Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        608,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "YOUR_GOOGLE_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\n  \"parts\": [{\n    \"text\": \"You are a review moderation AI for Bewakoof fashion brand.\\n\\nMODERATION GUIDELINES:\\n[PASTE YOUR GUIDELINES HERE]\\n\\nAnalyze this review:\\nRating: {{ $json.rating }}/5\\nReview Text: {{ $json.review }}\\nProduct ID: {{ $json.product_id }}\\nUser: {{ $json.user_name }}\\n{{ $json.image_similarity_score ? 'Image Similarity Score: ' + $json.image_similarity_score + '/100' : '' }}\\n\\nReturn ONLY valid JSON in this exact format:\\n{\\n  \\\"sentiment_score\\\": 75,\\n  \\\"decision\\\": \\\"approve\\\",\\n  \\\"reasoning\\\": \\\"Positive review with constructive feedback\\\",\\n  \\\"issues_detected\\\": []\\n}\"\n  }]\n}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\n  \"temperature\": 0.3,\n  \"candidateCount\": 1,\n  \"maxOutputTokens\": 500\n}"
+            }
+          ]
+        },
+        "options": {
+          "response": {},
+          "timeout": 30000
+        }
+      },
+      "id": "3cdbc67d-ebb6-4c4e-9af1-bcfe800dbf27",
+      "name": "Gemini Text Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        16,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response and apply decision logic\ntry {\n  const geminiResponse = $json.candidates[0].content.parts[0].text;\n  const cleanResponse = geminiResponse.replace(/```json|```/g, '').trim();\n  const aiResponse = JSON.parse(cleanResponse);\n  \n  const threshold = 50; // Starting threshold\n  \n  // Get original review data\n  const reviewData = $('Split In Batches').item.json;\n  \n  // Apply decision logic\n  let final_decision;\n  if (aiResponse.sentiment_score >= threshold && aiResponse.decision === 'approve') {\n    final_decision = 'approved';\n  } else if (aiResponse.sentiment_score < 30 || aiResponse.decision === 'reject') {\n    final_decision = 'rejected';\n  } else {\n    final_decision = 'manual_review';\n  }\n  \n  return {\n    // Original review data\n    id: reviewData.id,\n    user_id: reviewData.user_id,\n    user_name: reviewData.user_name,\n    product_id: reviewData.product_id,\n    rating: reviewData.rating,\n    review: reviewData.review,\n    has_image: reviewData.has_image,\n    image_url: reviewData.image_url,\n    \n    // AI analysis results\n    ai_sentiment_score: aiResponse.sentiment_score,\n    ai_reasoning: aiResponse.reasoning,\n    final_decision: final_decision,\n    issues_detected: aiResponse.issues_detected || [],\n    \n    // Image analysis results (if applicable)\n    image_similarity_score: reviewData.image_similarity_score || null,\n    image_reasoning: reviewData.image_reasoning || null,\n    \n    processed_at: new Date().toISOString()\n  };\n} catch (error) {\n  // Fallback for parsing errors\n  const reviewData = $('Split In Batches').item.json;\n  return {\n    id: reviewData.id,\n    ai_sentiment_score: 0,\n    ai_reasoning: 'AI parsing error: ' + error.message,\n    final_decision: 'manual_review',\n    issues_detected: ['ai_parsing_error'],\n    processed_at: new Date().toISOString()\n  };\n}"
+      },
+      "id": "0a391122-5421-49c6-a37e-c8c9915240a9",
+      "name": "Text Decision Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "8f33ce7f-3163-4e57-ad3b-707e3057b151"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9d58b4a4-eecd-4d47-95d5-4e54b14ccdd7",
+      "name": "Final Decision Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        880,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://www.bewakoof.com/api/rn/v1/admin/submitted-reviews/{{ $json.id }}/approve",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "approved"
+            },
+            {
+              "name": "ai_score",
+              "value": "={{ $json.ai_sentiment_score }}"
+            },
+            {
+              "name": "ai_reasoning",
+              "value": "={{ $json.ai_reasoning }}"
+            },
+            {
+              "name": "approved_at",
+              "value": "={{ $json.processed_at }}"
+            },
+            {
+              "name": "approval_method",
+              "value": "ai_auto"
+            }
+          ]
+        },
+        "options": {
+          "response": {}
+        }
+      },
+      "id": "f1f09d24-9cd2-47f5-a1f5-ce94b081968f",
+      "name": "Update Dashboard - Approved",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://www.bewakoof.com/api/rn/v1/admin/submitted-reviews/{{ $json.id }}/reject",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "rejected"
+            },
+            {
+              "name": "ai_score",
+              "value": "={{ $json.ai_sentiment_score }}"
+            },
+            {
+              "name": "rejection_reason",
+              "value": "={{ $json.ai_reasoning }}"
+            },
+            {
+              "name": "image_similarity_score",
+              "value": "={{ $json.image_similarity_score }}"
+            },
+            {
+              "name": "issues_detected",
+              "value": "={{ JSON.stringify($json.issues_detected) }}"
+            },
+            {
+              "name": "rejected_at",
+              "value": "={{ $json.processed_at }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {}
+        }
+      },
+      "id": "7a037504-506a-49d4-b55b-743555fae808",
+      "name": "Update Dashboard - Rejected",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "has_image",
+                    "rightValue": "false",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "61d4fd81-bb45-4dbc-b756-44b0c0cc11fe"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d93206d7-8fc1-46c7-8701-357f5b6ba8d8",
+      "name": "Review_Router_Text",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -208,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "has_image ",
+                    "rightValue": "true",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "61d4fd81-bb45-4dbc-b756-44b0c0cc11fe"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db178c31-cc5a-43ea-bded-a23c4864c15b",
+      "name": "Review_Router_Image",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://www.bewakoof.com/api/rn/v1/admin/submitted-reviews/{{ $json.id }}/manual",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "processed"
+            },
+            {
+              "name": "ai_score",
+              "value": "={{ $json.ai_sentiment_score }}"
+            },
+            {
+              "name": "ai_notes",
+              "value": "={{ $json.ai_reasoning }}"
+            },
+            {
+              "name": "flagged_issues",
+              "value": "={{ JSON.stringify($json.issues_detected) }}"
+            },
+            {
+              "name": "queued_at",
+              "value": "={{ $json.processed_at }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {}
+        }
+      },
+      "id": "6c26a931-9e8d-4951-8417-3af9ded9789e",
+      "name": "Update Dashboard - Manual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1136,
+        368
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Pending Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Pending Reviews": {
+      "main": [
+        [
+          {
+            "node": "Data Preparation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Preparation": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Review_Router_Text",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Review_Router_Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Product Images": {
+      "main": [
+        [
+          {
+            "node": "Image Similarity Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Similarity Analysis": {
+      "main": [
+        [
+          {
+            "node": "Image Decision Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Decision Logic": {
+      "main": [
+        [
+          {
+            "node": "Image Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Router": {
+      "main": [
+        [
+          {
+            "node": "Gemini Text Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Text Analysis": {
+      "main": [
+        [
+          {
+            "node": "Text Decision Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Decision Logic": {
+      "main": [
+        [
+          {
+            "node": "Final Decision Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Decision Switch": {
+      "main": [
+        [
+          {
+            "node": "Update Dashboard - Approved",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Dashboard - Rejected",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Dashboard - Manual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Dashboard - Approved": {
+      "main": [
+        []
+      ]
+    },
+    "Update Dashboard - Rejected": {
+      "main": [
+        []
+      ]
+    },
+    "Review_Router_Text": {
+      "main": [
+        [
+          {
+            "node": "Gemini Text Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review_Router_Image": {
+      "main": [
+        [
+          {
+            "node": "Fetch Product Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "bcfb0928-9eb8-494d-b7fc-f6a591e8ea88",
+  "meta": {
+    "instanceId": "32df3e635bfb310c0297f08cd8d1fce8f2a0dd0fd2139b8d2b43fff8450ee9b5"
+  },
+  "id": "ACjop43VsBRHAfUB",
+  "tags": []
+}
