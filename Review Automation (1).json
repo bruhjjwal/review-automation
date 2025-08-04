@@ -670,7 +670,6 @@
             "type": "main",
             "index": 0
           }
-        ]
         ],
         [
           {
@@ -678,7 +677,8 @@
             "type": "main",
             "index": 0
           }
-              ]
+        ]
+      ]
     },
     "Gemini Text Analysis": {
       "main": [
