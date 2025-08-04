@@ -157,12 +157,34 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "",
-                    "rightValue": "",
+                    "leftValue": "={{ $json.image_similarity_score }}",
+                    "rightValue": "50",
                     "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
+                      "type": "number",
+                      "operation": "gt"
+                    },
+                    "id": "image-score-gt-50"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.image_similarity_score }}",
+                    "rightValue": "50",
+                    "operator": {
+                      "type": "number",
+                      "operation": "lte"
+                    },
+                    "id": "image-score-lte-50"
                   }
                 ],
                 "combinator": "and"
@@ -247,13 +269,66 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "",
-                    "rightValue": "",
+                    "leftValue": "={{ $json.ai_sentiment_score }}",
+                    "rightValue": "50",
                     "operator": {
-                      "type": "string",
-                      "operation": "equals"
+                      "type": "number",
+                      "operation": "gt"
                     },
-                    "id": "8f33ce7f-3163-4e57-ad3b-707e3057b151"
+                    "id": "confidence-score-gt-50"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.ai_sentiment_score }}",
+                    "rightValue": "30",
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    },
+                    "id": "confidence-score-gte-30"
+                  },
+                  {
+                    "leftValue": "={{ $json.ai_sentiment_score }}",
+                    "rightValue": "50",
+                    "operator": {
+                      "type": "number",
+                      "operation": "lte"
+                    },
+                    "id": "confidence-score-lte-50"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.ai_sentiment_score }}",
+                    "rightValue": "30",
+                    "operator": {
+                      "type": "number",
+                      "operation": "lt"
+                    },
+                    "id": "confidence-score-lt-30"
                   }
                 ],
                 "combinator": "and"
@@ -596,7 +671,14 @@
             "index": 0
           }
         ]
-      ]
+        ],
+        [
+          {
+            "node": "Update Dashboard - Rejected",
+            "type": "main",
+            "index": 0
+          }
+              ]
     },
     "Gemini Text Analysis": {
       "main": [
@@ -627,14 +709,18 @@
             "node": "Update Dashboard - Approved",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Update Dashboard - Rejected",
-            "type": "main",
-            "index": 0
-          },
+          }
+        ],
+        [
           {
             "node": "Update Dashboard - Manual",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Dashboard - Rejected",
             "type": "main",
             "index": 0
           }
